@@ -20,6 +20,7 @@
 #include "synth_plugin.h"
 #include "parameter_slider.h"
 #include "sequence_keyboard_component.h"
+#include "editor_layout.h"
 #include "trance_gate_editor.h"
 #include "synth_gui_interface.h"
 #include "community_library.h"
@@ -258,7 +259,7 @@ class ModulationAmountSlider : public ParameterSlider {
     std::unique_ptr<AccessibilityHandler> createAccessibilityHandler() override;
 };
 
-class ModulationRemapKeyboardComponent : public Component {
+class ModulationRemapKeyboardComponent : public atlas::ui::ShapeView {
   public:
     std::function<bool(const KeyPress&)> onKeyPressed;
     std::function<String()> getStatusText;
@@ -286,7 +287,8 @@ class ModulationRemapKeyboardComponent : public Component {
 
     void paint(Graphics& g) override {
       atlas::ui::drawKeyboardEditorBox(g, *this,
-                                       getStatusText ? getStatusText() : String("Modulation remap keyboard editor"));
+                                       getStatusText ? getStatusText() : String("Modulation remap keyboard editor"),
+                                       paintShape);
     }
 
     std::unique_ptr<AccessibilityHandler> createAccessibilityHandler() override {
@@ -310,7 +312,7 @@ class ModulationRemapKeyboardComponent : public Component {
     }
 };
 
-class WavetableKeyboardComponent : public Component {
+class WavetableKeyboardComponent : public atlas::ui::ShapeView {
   public:
     std::function<bool(const KeyPress&, Component&)> onKeyPressed;
     std::function<String()> getStatusText;
@@ -333,7 +335,8 @@ class WavetableKeyboardComponent : public Component {
     void focusLost(FocusChangeType) override { repaint(); }
 
     void paint(Graphics& g) override {
-      atlas::ui::drawKeyboardEditorBox(g, *this, getStatusText ? getStatusText() : String("Wavetable keyboard editor"));
+      atlas::ui::drawKeyboardEditorBox(g, *this, getStatusText ? getStatusText() : String("Wavetable keyboard editor"),
+                                       paintShape);
     }
 
     std::unique_ptr<AccessibilityHandler> createAccessibilityHandler() override {
@@ -1030,7 +1033,7 @@ class SynthEditor : public AudioProcessorEditor, public SynthGuiInterface,
     int multiSampleUiState(int oscillator) const;
     // A slider for each knob of the instrument and a menu for each menu and button.
     void addInstrumentControlRows(int oscillator, const vital::multisample::LoadResult& result,
-                                  const std::function<Component*(std::unique_ptr<Component>, int)>& place,
+                                  const std::function<Component*(std::unique_ptr<Component>, const String&)>& place,
                                   const String& section_name);
     // Keeps those rows on the values the slot plays; another instrument rebuilds them.
     void syncInstrumentControls(int oscillator);
@@ -1308,6 +1311,10 @@ class SynthEditor : public AudioProcessorEditor, public SynthGuiInterface,
     // Whether the Presets group shows the preset browser (search, filters,
     // results, details and autoload) or only the summary and Preset menu.
     bool& preset_browser_shown_;
+    // The bounds of a menu or slider in the next cell of `parent`'s grid, with
+    // `name` shown above it. A parameter row shows its own name; this is for
+    // the controls that are not rows.
+    Rectangle<int> nextNamedCell(Component& parent, const String& name, int x, int& y, int width);
     void addCpuMeter(Component& parent, int x, int& y, int width, int& focusOrder);
     std::unique_ptr<CpuUsageMeter> cpu_meter_;
     Label title_;
@@ -1386,6 +1393,21 @@ class SynthEditor : public AudioProcessorEditor, public SynthGuiInterface,
     TextButton modulation_amount_cancel_ { "Cancel" };
     Viewport viewport_;
     Component rows_container_;
+    // Where the rows being laid out stand in their grid (showAllSections).
+    atlas::ui::RowFlow row_flow_;
+    // The drawings among the rows; the timer repaints the ones in view whose
+    // shape has changed. Cleared with the rows.
+    std::vector<atlas::ui::ShapeView*> shape_views_;
+    void watchShape(atlas::ui::ShapeView& view) { shape_views_.push_back(&view); }
+    void refreshShapesInView();
+    // What each drawing shows, and a stamp of it.
+    void paintLfoShape(Graphics& g, Rectangle<float> area, int lfo) const;
+    uint32 lfoShapeStamp(int lfo) const;
+    void paintModulationRemap(Graphics& g, Rectangle<float> area, int slot) const;
+    uint32 modulationRemapStamp(int slot) const;
+    void paintWavetableFrame(Graphics& g, Rectangle<float> area, int oscillator) const;
+    uint32 wavetableFrameStamp(int oscillator) const;
+    atlas::ui::EnvelopeShape envelopeShape(int envelope) const;
     std::vector<std::unique_ptr<Component>> section_headers_;
     std::vector<std::unique_ptr<AccessibleParameterRow>> rows_;
     // What keepFocusedSwitchingRow holds while a rebuild runs: the row, its

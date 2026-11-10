@@ -17,6 +17,64 @@ TranceGateEditor::TranceGateEditor(State& state) : state_(state) {
   setHelpText(helpText());
   getStatusText = [this] { return statusText(); };
   onKeyPressed = [this](const KeyPress& key) { return handleShortcut(key); };
+  paintShape = [this](Graphics& g, Rectangle<float> area) { paintSteps(g, area); };
+  // The grid and the range have rows of their own, which change the picture too.
+  shapeStamp = [this] {
+    atlas::ui::Stamp stamp;
+    if (read)
+      stamp.add(read("grid")).add(read("start")).add(read("stop"));
+    return stamp.add(state_.cursor).value();
+  };
+}
+
+void TranceGateEditor::paintSteps(Graphics& g, Rectangle<float> area) const {
+  using namespace atlas::ui;
+  if (!read)
+    return;
+  const int start = jlimit(1, vital::trance_gate::kSteps, roundToInt(read("start")));
+  const int stop = jlimit(1, vital::trance_gate::kSteps, roundToInt(read("stop")));
+  Step steps[vital::trance_gate::kSteps];
+  double peak = 1.0;
+  for (int i = 0; i < vital::trance_gate::kSteps; ++i) {
+    steps[i] = step(i);
+    peak = jmax(peak, steps[i].value + 1.0);
+  }
+
+  // Each step's gain through its length, with no attack or decay.
+  const vital::trance_gate::Envelope flat { 0.0, 0.0, 1.0 };
+  constexpr int kSamples = 16;
+  const float width = area.getWidth() / static_cast<float>(vital::trance_gate::kSteps);
+  for (int i = 0; i < vital::trance_gate::kSteps; ++i) {
+    const Rectangle<float> slot(area.getX() + static_cast<float>(i) * width, area.getY(), width, area.getHeight());
+    const auto bar = slot.reduced(1.0f, 0.0f);
+    // A gated step holds its level and then cuts off; a ramp slopes.
+    const bool ramp = steps[i].mode >= 3;
+    Path shape;
+    shape.startNewSubPath(bar.getX(), bar.getBottom());
+    for (int sample = 0; sample < kSamples; ++sample) {
+      const double phase = (sample + (ramp ? 0.0 : 0.5)) / kSamples;
+      const double gain = vital::trance_gate::targetGain(steps[i], flat, phase, 1.0) / peak;
+      const float top = bar.getBottom() - static_cast<float>(gain) * bar.getHeight();
+      shape.lineTo(bar.getX() + bar.getWidth() * static_cast<float>(sample) / kSamples, top);
+      if (!ramp)
+        shape.lineTo(bar.getX() + bar.getWidth() * static_cast<float>(sample + 1) / kSamples, top);
+    }
+    if (ramp) {
+      const double gain = vital::trance_gate::targetGain(steps[i], flat, 1.0, 1.0) / peak;
+      shape.lineTo(bar.getRight(), bar.getBottom() - static_cast<float>(gain) * bar.getHeight());
+    }
+    shape.lineTo(bar.getRight(), bar.getBottom());
+    shape.closeSubPath();
+    const bool plays = i + 1 >= jmin(start, stop) && i + 1 <= jmax(start, stop);
+    g.setColour(colours::accent.withAlpha(plays ? 0.9f : 0.3f));
+    g.fillPath(shape);
+    g.setColour(colours::track.withAlpha(plays ? 1.0f : 0.5f));
+    g.fillRect(bar.withTop(bar.getBottom() - 1.0f));
+    if (i == state_.cursor) {
+      g.setColour(colours::focus);
+      g.drawRect(slot, 1.5f);
+    }
+  }
 }
 
 String TranceGateEditor::helpText() {

@@ -17,6 +17,9 @@ class TranceGateEditor : public LfoMsegKeyboardComponent {
     std::function<void(const String&)> announce;
     bool handleShortcut(const KeyPress& key);
     String statusText() const;
+    // The pattern: a bar for each step in its shape, dimmed outside the range
+    // that plays, with the cursor's step outlined.
+    void paintSteps(Graphics& g, Rectangle<float> area) const;
     void refresh();
     static String helpText();
   private:

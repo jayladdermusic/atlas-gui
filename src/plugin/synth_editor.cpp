@@ -6254,7 +6254,10 @@ class AccessibleParameterRow : public Component {
       built_description_ = parameter_description;
       label_.setText(accessible_name, dontSendNotification);
       label_.setTitle(accessible_name + " label");
-      label_.setColour(Label::textColourId, atlas::ui::colours::text);
+      label_.setColour(Label::textColourId, atlas::ui::colours::textDim);
+      label_.setFont(FontOptions(13.5f));
+      label_.setBorderSize(BorderSize<int>(0, 2, 0, 0));
+      label_.setMinimumHorizontalScale(0.85f);
       addAndMakeVisible(label_);
 
       if (use_combo_control_) {
@@ -6313,7 +6316,7 @@ class AccessibleParameterRow : public Component {
       }
       else {
         slider_.setSliderStyle(Slider::LinearHorizontal);
-        slider_.setTextBoxStyle(Slider::TextBoxRight, false, 150, 28);
+        slider_.setTextBoxStyle(Slider::TextBoxRight, false, 96, 26);
         setParameterSliderSteps(slider_, parameter_, min_normalized_value_, max_normalized_value_);
         slider_.setTitle(accessible_name);
         slider_.setDescription(parameter_description);
@@ -6586,9 +6589,11 @@ class AccessibleParameterRow : public Component {
       focusableControl()->setExplicitFocusOrder(order);
     }
 
+    static constexpr int kHeight = atlas::ui::kRowHeight;
+
     void resized() override {
-      auto bounds = getLocalBounds().reduced(8, 4);
-      label_.setBounds(bounds.removeFromLeft(jmin(240, bounds.getWidth() / 3)));
+      auto bounds = getLocalBounds().reduced(atlas::ui::kRowPadX, atlas::ui::kRowPadY);
+      label_.setBounds(bounds.removeFromTop(atlas::ui::kRowLabelHeight));
       if (use_combo_control_)
         combo_.setBounds(bounds);
       else if (use_toggle_control_)
@@ -6929,6 +6934,7 @@ class AccessibleSectionHeader : public Component, public AccessibleContextMenuTa
       onKeyCommand = nullptr;
       onContextMenuCommand = nullptr;
       onAccessibilityFocus = nullptr;
+      heading_drawn_ = true;
       getProperties().clear();   // the explicit focus order too
       configure(title, groupRank, topLevel, sectionKey);
       repaint();
@@ -6950,9 +6956,11 @@ class AccessibleSectionHeader : public Component, public AccessibleContextMenuTa
       g.drawRoundedRectangle(card.reduced(0.5f), kCardRadius, 1.0f);
 
       const auto heading = getLocalBounds().withHeight(headerHeight());
-      g.setColour(hasKeyboardFocus(true) ? colours::accent : colours::text);
-      g.setFont(FontOptions(top_level_ ? 18.0f : 15.0f, Font::bold));
-      g.drawText(title_, heading.reduced(14, 0), Justification::centredLeft, true);
+      if (heading_drawn_) {
+        g.setColour(hasKeyboardFocus(true) ? colours::accent : colours::text);
+        g.setFont(FontOptions(top_level_ ? 18.0f : 15.0f, Font::bold));
+        g.drawText(title_, heading.reduced(14, 0), Justification::centredLeft, true);
+      }
       if (hasKeyboardFocus(false))
         drawFocusRing(g, heading.toFloat().reduced(4.0f), kCardRadius - 2.0f);
     }
@@ -7035,6 +7043,13 @@ class AccessibleSectionHeader : public Component, public AccessibleContextMenuTa
       repaint();
     }
 
+    // Off for a group whose name is only for a screen reader: the Toolbar,
+    // which the eye knows as the bar it is.
+    void setHeadingDrawn(bool drawn) {
+      heading_drawn_ = drawn;
+      repaintHeading();
+    }
+
     int headerHeight() const { return top_level_ ? 42 : 34; }
     // A group's heading (Oscillators, Global) rather than a section's.
     bool isTopLevel() const { return top_level_; }
@@ -7059,6 +7074,7 @@ class AccessibleSectionHeader : public Component, public AccessibleContextMenuTa
 
     String title_;
     bool top_level_ = false;
+    bool heading_drawn_ = true;
     String section_key_;
     std::vector<Component*> child_focus_order_;
 };
@@ -7070,6 +7086,175 @@ namespace {
     const auto* header = dynamic_cast<const AccessibleSectionHeader*>(component);
     return header != nullptr && header->isTopLevel() && header->getTitle() == group;
   }
+}
+
+void SynthEditor::refreshShapesInView() {
+  const auto view = viewport_.getViewArea();
+  for (auto* shape : shape_views_)
+    if (rows_container_.getLocalArea(shape, shape->getLocalBounds()).intersects(view))
+      shape->refreshShape();
+}
+
+// The LFO's curve with its points, and for the LFO the keyboard editor is on,
+// the grid, the selected points and the cursor.
+void SynthEditor::paintLfoShape(Graphics& g, Rectangle<float> area, int lfo) const {
+  auto* generator = lfoGeneratorForIndex(lfo);
+  if (generator == nullptr)
+    return;
+  const bool active = lfo == active_lfo_index_;
+  if (active) {
+    const float grid = lfoGridAmount();
+    if (grid >= 1.0f / 64.0f)
+      for (float phase = grid; phase < 1.0f - grid * 0.5f; phase += grid)
+        atlas::ui::drawPlotLine(g, area, phase);
+  }
+  atlas::ui::drawCurve(g, area, [generator](float phase) { return generator->valueAtPhase(phase); });
+  const int current = active ? currentLfoPointIndex() : -1;
+  for (int i = 0; i < generator->getNumPoints(); ++i) {
+    const auto point = generator->getPoint(i);
+    atlas::ui::drawCurvePoint(g, area, point.first, 1.0f - point.second,
+                              i == current || (active && isLfoPointSelected(point.first)));
+  }
+  if (active)
+    atlas::ui::drawPlotCursor(g, area, lfo_cursor_phase_);
+}
+
+uint32 SynthEditor::lfoShapeStamp(int lfo) const {
+  auto* generator = lfoGeneratorForIndex(lfo);
+  if (generator == nullptr)
+    return 0;
+  atlas::ui::Stamp stamp;
+  stamp.add(generator->getNumPoints());
+  for (int i = 0; i < generator->getNumPoints(); ++i)
+    stamp.add(generator->getPoint(i).first).add(generator->getPoint(i).second).add(generator->getPower(i));
+  // The rendered curve too: smoothing, deform and swing change it, not the points.
+  for (int i = 0; i <= 16; ++i)
+    stamp.add(generator->valueAtPhase(static_cast<float>(i) / 16.0f));
+  if (lfo == active_lfo_index_) {
+    stamp.add(lfo_cursor_phase_).add(lfo_grid_index_).add(lfoGridAmount());
+    for (const float phase : selected_lfo_point_phases_)
+      stamp.add(phase);
+  }
+  return stamp.value();
+}
+
+// A route's remap: output against input, with its points.
+void SynthEditor::paintModulationRemap(Graphics& g, Rectangle<float> area, int slot) const {
+  const auto* route = synth_.getModulationBank().atIndex(slot - 1);
+  auto* generator = route != nullptr && route->modulation_processor != nullptr
+      ? route->modulation_processor->lineMapGenerator() : nullptr;
+  if (generator == nullptr || generator->getNumPoints() == 0)
+    return;
+  // Input and output share a scale, so the plot is no wider than it is tall by much.
+  area = area.withWidth(jmin(area.getWidth(), area.getHeight() * 3.0f));
+  for (const float phase : { 0.0f, 0.5f, 1.0f })
+    atlas::ui::drawPlotLine(g, area, phase);
+  atlas::ui::drawCurve(g, area, [generator](float phase) { return generator->valueAtPhase(phase); });
+  const int selected = active_modulation_remap_connection_ == slot - 1 ? selectedModulationRemapPointIndex() : -1;
+  for (int i = 0; i < generator->getNumPoints(); ++i) {
+    const auto point = generator->getPoint(i);
+    atlas::ui::drawCurvePoint(g, area, point.first, 1.0f - point.second, i == selected);
+  }
+}
+
+uint32 SynthEditor::modulationRemapStamp(int slot) const {
+  const auto* route = synth_.getModulationBank().atIndex(slot - 1);
+  auto* generator = route != nullptr && route->modulation_processor != nullptr
+      ? route->modulation_processor->lineMapGenerator() : nullptr;
+  if (generator == nullptr)
+    return 0;
+  atlas::ui::Stamp stamp;
+  stamp.add(generator->getNumPoints());
+  for (int i = 0; i < generator->getNumPoints(); ++i)
+    stamp.add(generator->getPoint(i).first).add(generator->getPoint(i).second).add(generator->getPower(i));
+  for (int i = 0; i <= 8; ++i)
+    stamp.add(generator->valueAtPhase(static_cast<float>(i) / 8.0f));
+  if (active_modulation_remap_connection_ == slot - 1)
+    stamp.add(modulation_remap_point_index_);
+  return stamp.value();
+}
+
+namespace {
+  constexpr int kHarmonicsDrawn = 32;
+
+  // The first of the run of kHarmonicsDrawn harmonics that holds `harmonic`.
+  int firstHarmonicDrawn(int harmonic) {
+    return ((harmonic - 1) / kHarmonicsDrawn) * kHarmonicsDrawn + 1;
+  }
+}
+
+// The frame the wavetable keyboard editor is on: its cycle, and beside it the
+// levels of the harmonics around the one being edited.
+void SynthEditor::paintWavetableFrame(Graphics& g, Rectangle<float> area, int oscillator) const {
+  auto* source = currentWaveSource(oscillator);
+  if (source == nullptr || source->numFrames() == 0)
+    return;
+  const auto& state = wavetable_keyboard_state_[oscillator];
+  const auto* frame = source->getKeyframe(jlimit(0, source->numFrames() - 1, state.frame))->wave_frame();
+  auto harmonics_area = area.removeFromRight(area.getWidth() * 0.4f).withTrimmedLeft(16.0f);
+  atlas::ui::drawWaveform(g, area, frame->time_domain, vital::WaveFrame::kWaveformSize);
+
+  const int harmonic = jlimit(1, vital::WaveFrame::kNumRealComplex - 2, state.harmonic);
+  const int first = firstHarmonicDrawn(harmonic);
+  float levels[kHarmonicsDrawn] = {};
+  for (int i = 0; i < kHarmonicsDrawn && first + i < vital::WaveFrame::kNumRealComplex - 1; ++i)
+    levels[i] = std::abs(frame->frequency_domain[first + i]);
+  atlas::ui::drawBars(g, harmonics_area, levels, kHarmonicsDrawn, harmonic - first);
+}
+
+uint32 SynthEditor::wavetableFrameStamp(int oscillator) const {
+  auto* source = currentWaveSource(oscillator);
+  if (source == nullptr || source->numFrames() == 0)
+    return 0;
+  const auto& state = wavetable_keyboard_state_[oscillator];
+  const int frame_index = jlimit(0, source->numFrames() - 1, state.frame);
+  const auto* frame = source->getKeyframe(frame_index)->wave_frame();
+  const int harmonic = jlimit(1, vital::WaveFrame::kNumRealComplex - 2, state.harmonic);
+  const int first = firstHarmonicDrawn(harmonic);
+  atlas::ui::Stamp stamp;
+  stamp.add(frame_index).add(harmonic).add(source->numFrames());
+  for (int i = 0; i < kHarmonicsDrawn && first + i < vital::WaveFrame::kNumRealComplex - 1; ++i)
+    stamp.add(frame->frequency_domain[first + i].real()).add(frame->frequency_domain[first + i].imag());
+  constexpr int kSamplesStamped = 64;
+  for (int i = 0; i < kSamplesStamped; ++i)
+    stamp.add(frame->time_domain[i * (vital::WaveFrame::kWaveformSize / kSamplesStamped)]);
+  return stamp.value();
+}
+
+// The envelope as its rows set it, times in seconds.
+atlas::ui::EnvelopeShape SynthEditor::envelopeShape(int envelope) const {
+  const std::string prefix = "env_" + std::to_string(envelope) + "_";
+  const auto& controls = synth_.getControls();
+  const auto value = [&](const char* name) {
+    const auto found = controls.find(prefix + name);
+    return found == controls.end() || found->second == nullptr ? 0.0f : static_cast<float>(found->second->value());
+  };
+  // The times are stored as fourth roots of seconds (ValueDetails::kQuartic).
+  const auto seconds = [&](const char* name) {
+    const float root = value(name);
+    return root * root * root * root;
+  };
+  atlas::ui::EnvelopeShape shape;
+  shape.delay = seconds("delay");
+  shape.attack = seconds("attack");
+  shape.hold = seconds("hold");
+  shape.decay = seconds("decay");
+  shape.sustain = value("sustain");
+  shape.release = seconds("release");
+  shape.attack_power = value("attack_power");
+  shape.decay_power = value("decay_power");
+  shape.release_power = value("release_power");
+  return shape;
+}
+
+Rectangle<int> SynthEditor::nextNamedCell(Component& parent, const String& name, int x, int& y, int width) {
+  auto cell = row_flow_.next(parent, x, y, width, atlas::ui::kRowHeight)
+                  .reduced(atlas::ui::kRowPadX, atlas::ui::kRowPadY);
+  auto caption = std::make_unique<atlas::ui::Caption>(name);
+  caption->setBounds(cell.removeFromTop(atlas::ui::kRowLabelHeight));
+  parent.addAndMakeVisible(caption.get());
+  section_headers_.push_back(std::move(caption));
+  return cell;
 }
 
 void SynthEditor::addCpuMeter(Component& parent, int x, int& y, int width, int& focusOrder) {
@@ -7109,14 +7294,17 @@ SynthEditor::SynthEditor(SynthPlugin& synth) :
   setFocusContainerType(Component::FocusContainerType::keyboardFocusContainer);
 
   title_.setText("Atlas", dontSendNotification);
-  title_.setFont(FontOptions(24.0f, Font::bold));
+  title_.setFont(FontOptions(20.0f, Font::bold));
   title_.setTitle("Atlas");
   title_.setColour(Label::textColourId, atlas::ui::colours::text);
   addAndMakeVisible(title_);
 
   // The Toolbar, the first group: Settings, Undo, Redo and Show preset browser.
   toolbar_ = std::make_unique<AccessibleSectionHeader>("Toolbar", -1, true);
+  toolbar_->setHeadingDrawn(false);
   addAndMakeVisible(*toolbar_);
+  // The plugin's name sits on the bar, where the group's heading would be.
+  title_.toFront(false);
 
   settings_button_.setTitle("Settings");
   settings_button_.setHelpText("Opens Settings: plugin info, tuning, MIDI learn mappings, "
@@ -7699,9 +7887,9 @@ void SynthEditor::paint(Graphics& graphics) {
 
 void SynthEditor::resized() {
   auto bounds = getLocalBounds().reduced(16);
-  title_.setBounds(bounds.removeFromTop(40));
-  // The Toolbar: its heading on the left, its controls in one row beside it.
+  // The Toolbar: the plugin's name on the left, its controls in one row beside it.
   toolbar_->setBounds(bounds.removeFromTop(46));
+  title_.setBounds(toolbar_->getBounds().withWidth(110).withTrimmedLeft(10));
   auto toolbar_row = toolbar_->getLocalBounds().reduced(0, 4);
   toolbar_row.removeFromLeft(110);
   settings_button_.setBounds(toolbar_row.removeFromLeft(110).reduced(3));
@@ -8941,13 +9129,12 @@ void SynthEditor::addOscillatorSectionContent(int oscillator, const String& sect
                                                                              : name));
     row->setExplicitFocusOrder(focus_order++);
     row->setControlFocusOrder(focus_order++);
-    row->setBounds(row_x, row_y, row_width, 48);
+    row->setBounds(row_flow_.next(row_parent, row_x, row_y, row_width, AccessibleParameterRow::kHeight));
     row_parent.addAndMakeVisible(row.get());
     if (group != nullptr)
       group->addAccessibleChild(row->focusableControl());
     row_focus_order_.push_back(row->focusableControl());
     rows_.push_back(std::move(row));
-    row_y += 48;
 
     auto* bridge = dynamic_cast<ValueBridge*>(&parameter);
     if (bridge == nullptr)
@@ -8964,13 +9151,13 @@ void SynthEditor::addOscillatorSectionContent(int oscillator, const String& sect
     button_ptr->setWantsKeyboardFocus(true);
     button_ptr->onClick = [this, id] { randomizeSeed(id); };
     button_ptr->setExplicitFocusOrder(focus_order++);
-    button_ptr->setBounds(row_x, row_y, row_width, 38);
+    button_ptr->setBounds(row_flow_.nextBesideRows(row_parent, row_x, row_y, row_width,
+                                                   AccessibleParameterRow::kHeight));
     row_parent.addAndMakeVisible(button_ptr);
     if (group != nullptr)
       group->addAccessibleChild(button_ptr);
     row_focus_order_.push_back(button_ptr);
     section_headers_.push_back(std::move(button));
-    row_y += 44;
   };
 
   auto open_group = [&](const String& title, const String& key, const String& description, Component& group_parent,
@@ -9746,6 +9933,8 @@ void SynthEditor::clearSectionComponents() {
   accessibility_focus_order_.clear();
   row_focus_order_.clear();
   top_level_accessibility_order_.clear();
+  row_flow_.reset();
+  shape_views_.clear();
   for (auto& component : section_headers_)
     if (auto* header = dynamic_cast<AccessibleSectionHeader*>(component.get()))
       header->clearAccessibleChildren();
@@ -9968,12 +10157,12 @@ void SynthEditor::showAllSections(bool announce) {
             row->setAccessibleName(modulationControlTitle(bridge->getParameterId()));
             row->setExplicitFocusOrder(focus_order++);
             row->setControlFocusOrder(focus_order++);
-            row->setBounds(10, slot_y, jmax(600, slot_width - 20), 48);
+            row->setBounds(row_flow_.next(*slot_ptr, 10, slot_y, jmax(600, slot_width - 20),
+                                          AccessibleParameterRow::kHeight));
             slot_ptr->addAndMakeVisible(row.get());
             slot_ptr->addAccessibleChild(row->focusableControl());
             row_focus_order_.push_back(row->focusableControl());
             rows_.push_back(std::move(row));
-            slot_y += 48;
           }
 
           auto* connection = synth_.getModulationBank().atIndex(slot - 1);
@@ -9993,12 +10182,17 @@ void SynthEditor::showAllSections(bool announce) {
             };
             remap_ptr->getStatusText = [this, slot] { return modulationRemapStatusTextForSlot(slot); };
             remap_ptr->setExplicitFocusOrder(focus_order++);
-            remap_ptr->setBounds(10, slot_y, jmax(600, slot_width - 20), 82);
+            remap_ptr->paintShape = [this, slot](Graphics& g, Rectangle<float> area) {
+              paintModulationRemap(g, area, slot);
+            };
+            remap_ptr->shapeStamp = [this, slot] { return modulationRemapStamp(slot); };
+            watchShape(*remap_ptr);
+            remap_ptr->setBounds(10, slot_y, jmax(600, slot_width - 20), atlas::ui::kShapeEditorHeight);
             slot_ptr->addAndMakeVisible(remap_ptr);
             slot_ptr->addAccessibleChild(remap_ptr);
             row_focus_order_.push_back(remap_ptr);
             section_headers_.push_back(std::move(remap));
-            slot_y += 88;
+            slot_y += atlas::ui::kShapeEditorHeight + 6;
           }
 
           // Only a slot with a source or destination has something to clear.
@@ -10012,12 +10206,11 @@ void SynthEditor::showAllSections(bool announce) {
             clear_ptr->setWantsKeyboardFocus(true);
             clear_ptr->onClick = [this, slot] { clearModulationSlot(slot); };
             clear_ptr->setExplicitFocusOrder(focus_order++);
-            clear_ptr->setBounds(10, slot_y, jmax(600, slot_width - 20), 38);
+            clear_ptr->setBounds(row_flow_.nextButton(*slot_ptr, 10, slot_y, jmax(600, slot_width - 20)));
             slot_ptr->addAndMakeVisible(clear_ptr);
             slot_ptr->addAccessibleChild(clear_ptr);
             row_focus_order_.push_back(clear_ptr);
             section_headers_.push_back(std::move(clear));
-            slot_y += 44;
           }
 
           slot_ptr->setBounds(flatten_section ? 16 : 10, section_y, slot_width, slot_y);
@@ -10033,6 +10226,9 @@ void SynthEditor::showAllSections(bool announce) {
         continue;
       }
 
+      // Where this section's own rows and buttons go.
+      const int row_x = flatten_section ? 16 : 10;
+      const int row_width = jmax(620, width - (flatten_section ? 32 : 34));
       auto addActionButton = [&](const String& title, const String& description, std::function<void()> action) {
         auto button = std::make_unique<OffscreenTextButton>(title);
         auto* button_ptr = button.get();
@@ -10042,14 +10238,34 @@ void SynthEditor::showAllSections(bool announce) {
         button_ptr->setWantsKeyboardFocus(true);
         button_ptr->onClick = std::move(action);
         button_ptr->setExplicitFocusOrder(focus_order++);
-        button_ptr->setBounds(flatten_section ? 16 : 10, section_y,
-                              jmax(620, width - (flatten_section ? 32 : 34)), 38);
+        button_ptr->setBounds(row_flow_.nextBesideRows(*section_ptr, row_x, section_y, row_width,
+                                                       AccessibleParameterRow::kHeight));
         section_ptr->addAndMakeVisible(button_ptr);
         section_ptr->addAccessibleChild(button_ptr);
         row_focus_order_.push_back(button_ptr);
         section_headers_.push_back(std::move(button));
-        section_y += 44;
       };
+
+      if (section_name.startsWith("Envelope ")) {
+        const int envelope = section_name.fromFirstOccurrenceOf("Envelope ", false, false).getIntValue();
+        auto picture = std::make_unique<atlas::ui::ShapeDisplay>();
+        picture->paintShape = [this, envelope](Graphics& g, Rectangle<float> area) {
+          atlas::ui::drawEnvelope(g, area, envelopeShape(envelope));
+        };
+        picture->shapeStamp = [this, envelope] {
+          const auto shape = envelopeShape(envelope);
+          atlas::ui::Stamp stamp;
+          for (const float value : { shape.delay, shape.attack, shape.hold, shape.decay, shape.sustain, shape.release,
+                                     shape.attack_power, shape.decay_power, shape.release_power })
+            stamp.add(value);
+          return stamp.value();
+        };
+        watchShape(*picture);
+        picture->setBounds(row_x, section_y, row_width, atlas::ui::kShapePictureHeight);
+        section_ptr->addAndMakeVisible(picture.get());
+        section_headers_.push_back(std::move(picture));
+        section_y += atlas::ui::kShapePictureHeight + 8;
+      }
 
       const int oscillator_section = oscillatorIndexForSectionName(section_name);
       if (oscillator_section >= 0) {
@@ -10077,12 +10293,10 @@ void SynthEditor::showAllSections(bool announce) {
         section_y += 60;
 
         auto addRoutingControl = [&](Component& component) {
-          component.setBounds(flatten_section ? 16 : 10, section_y,
-                              jmax(620, width - (flatten_section ? 32 : 34)), 38);
+          component.setBounds(row_flow_.nextButton(*section_ptr, row_x, section_y, row_width));
           section_ptr->addAndMakeVisible(component);
           section_ptr->addAccessibleChild(&component);
           row_focus_order_.push_back(&component);
-          section_y += 44;
         };
 
         addRoutingControl(routing_mode_);
@@ -10161,13 +10375,11 @@ void SynthEditor::showAllSections(bool announce) {
           // G and H in the keyboard editor step this menu's choice.
           shape_ptr->getProperties().set("LfoShapePreset", lfo);
           shape_ptr->setExplicitFocusOrder(focus_order++);
-          shape_ptr->setBounds(flatten_section ? 16 : 10, section_y,
-                               jmax(620, width - (flatten_section ? 32 : 34)), 38);
+          shape_ptr->setBounds(row_flow_.nextButton(*section_ptr, row_x, section_y, row_width));
           section_ptr->addAndMakeVisible(shape_ptr);
           section_ptr->addAccessibleChild(shape_ptr);
           row_focus_order_.push_back(shape_ptr);
           section_headers_.push_back(std::move(shape));
-          section_y += 44;
 
           auto apply_shape = std::make_unique<OffscreenTextButton>("Apply shape");
           auto* apply_shape_ptr = apply_shape.get();
@@ -10181,13 +10393,11 @@ void SynthEditor::showAllSections(bool announce) {
             applyLfoShapePreset();
           };
           apply_shape_ptr->setExplicitFocusOrder(focus_order++);
-          apply_shape_ptr->setBounds(flatten_section ? 16 : 10, section_y,
-                                     jmax(620, width - (flatten_section ? 32 : 34)), 38);
+          apply_shape_ptr->setBounds(row_flow_.nextButton(*section_ptr, row_x, section_y, row_width));
           section_ptr->addAndMakeVisible(apply_shape_ptr);
           section_ptr->addAccessibleChild(apply_shape_ptr);
           row_focus_order_.push_back(apply_shape_ptr);
           section_headers_.push_back(std::move(apply_shape));
-          section_y += 44;
 
           auto keyboard = std::make_unique<LfoMsegKeyboardComponent>();
           auto* keyboard_ptr = keyboard.get();
@@ -10200,13 +10410,15 @@ void SynthEditor::showAllSections(bool announce) {
           };
           keyboard_ptr->getStatusText = [this, lfo] { return lfoMsegStatusTextFor(lfo); };
           keyboard_ptr->setExplicitFocusOrder(focus_order++);
-          keyboard_ptr->setBounds(flatten_section ? 16 : 10, section_y,
-                                  jmax(620, width - (flatten_section ? 32 : 34)), 74);
+          keyboard_ptr->paintShape = [this, lfo](Graphics& g, Rectangle<float> area) { paintLfoShape(g, area, lfo); };
+          keyboard_ptr->shapeStamp = [this, lfo] { return lfoShapeStamp(lfo); };
+          watchShape(*keyboard_ptr);
+          keyboard_ptr->setBounds(row_x, section_y, row_width, atlas::ui::kShapeEditorHeight);
           section_ptr->addAndMakeVisible(keyboard_ptr);
           section_ptr->addAccessibleChild(keyboard_ptr);
           row_focus_order_.push_back(keyboard_ptr);
           section_headers_.push_back(std::move(keyboard));
-          section_y += 82;
+          section_y += atlas::ui::kShapeEditorHeight + 8;
         }
       }
       else if (effectIdForSection(section_name).isNotEmpty()) {
@@ -10220,8 +10432,6 @@ void SynthEditor::showAllSections(bool announce) {
       // VoiceOver can enter, after its other rows.
       AccessibleSectionHeader* arp_destinations = nullptr;
       int destinations_y = 0;
-      const int row_x = flatten_section ? 16 : 10;
-      const int row_width = jmax(620, width - (flatten_section ? 32 : 34));
       auto close_arp_destinations = [&] {
         if (arp_destinations == nullptr)
           return;
@@ -10267,12 +10477,11 @@ void SynthEditor::showAllSections(bool announce) {
         row->setControlFocusOrder(focus_order++);
         AccessibleSectionHeader& row_group = arp_destinations != nullptr ? *arp_destinations : *section_ptr;
         if (arp_destinations != nullptr) {
-          row->setBounds(10, destinations_y, jmax(580, row_width - 20), 48);
-          destinations_y += 48;
+          row->setBounds(row_flow_.next(row_group, 10, destinations_y, jmax(580, row_width - 20),
+                                        AccessibleParameterRow::kHeight));
         }
         else {
-          row->setBounds(row_x, section_y, row_width, 48);
-          section_y += 48;
+          row->setBounds(row_flow_.next(row_group, row_x, section_y, row_width, AccessibleParameterRow::kHeight));
         }
         row_group.addAndMakeVisible(row.get());
         row_group.addAccessibleChild(row->focusableControl());
@@ -18006,12 +18215,11 @@ void SynthEditor::addFxBusControlsGroup(const String& sectionName, Component& pa
     button_ptr->setWantsKeyboardFocus(true);
     button_ptr->setExplicitFocusOrder(focusOrder++);
     button_ptr->onClick = std::move(action);
-    button_ptr->setBounds(10, group_y, jmax(200, width - 20), 38);
+    button_ptr->setBounds(row_flow_.nextButton(*group_ptr, 10, group_y, jmax(200, width - 20)));
     group_ptr->addAndMakeVisible(button_ptr);
     group_ptr->addAccessibleChild(button_ptr);
     row_focus_order_.push_back(button_ptr);
     section_headers_.push_back(std::move(button));
-    group_y += 44;
   };
   {
     const String title = "Bus enabled";
@@ -18040,13 +18248,12 @@ void SynthEditor::addFxBusControlsGroup(const String& sectionName, Component& pa
       postPluginAnnouncement(fxBusNameForSection(sectionName) + (enabled ? " enabled" : " bypassed"),
                              AccessibilityHandler::AnnouncementPriority::high);
     };
-    toggle_ptr->setBounds(10, group_y, jmax(200, width - 20), 38);
+    toggle_ptr->setBounds(row_flow_.nextButton(*group_ptr, 10, group_y, jmax(200, width - 20)));
     group_ptr->addAndMakeVisible(toggle_ptr);
     group_ptr->addAccessibleChild(toggle_ptr);
     row_focus_order_.push_back(toggle_ptr);
     fx_bus_toggles_.push_back({ sectionName, toggle_ptr });
     section_headers_.push_back(std::move(toggle));
-    group_y += 44;
   }
   add_button("Clear bus", "Remove all effects from " + fxBusNameForSection(sectionName),
               [this, sectionName] {
@@ -18364,12 +18571,11 @@ void SynthEditor::addEffectSlotGroups(const String& sectionName, Component& pare
         row->setAccessibleName(floaty_mode ? "Time Sync" : id == enabled_id ? "Enabled" : local_name);
       row->setExplicitFocusOrder(focusOrder++);
       row->setControlFocusOrder(focusOrder++);
-      row->setBounds(10, row_y, jmax(580, row_width - 20), 48);
+      row->setBounds(row_flow_.next(row_parent, 10, row_y, jmax(580, row_width - 20), AccessibleParameterRow::kHeight));
       row_parent.addAndMakeVisible(row.get());
       accessible_parent.addAccessibleChild(row->focusableControl());
       row_focus_order_.push_back(row->focusableControl());
       rows_.push_back(std::move(row));
-      row_y += 48;
     };
 
     // Every inserted effect begins with its one functional bypass control.
@@ -18434,12 +18640,11 @@ void SynthEditor::addEffectSlotGroups(const String& sectionName, Component& pare
         button_ptr->setWantsKeyboardFocus(true);
         button_ptr->onClick = std::move(action);
         button_ptr->setExplicitFocusOrder(focusOrder++);
-        button_ptr->setBounds(10, ir_y, jmax(580, ir_width - 20), 38);
+        button_ptr->setBounds(row_flow_.nextButton(*ir_group_ptr, 10, ir_y, jmax(580, ir_width - 20)));
         ir_group_ptr->addAndMakeVisible(button_ptr);
         ir_group_ptr->addAccessibleChild(button_ptr);
         row_focus_order_.push_back(button_ptr);
         section_headers_.push_back(std::move(button));
-        ir_y += 44;
         return button_ptr;
       };
 
@@ -18729,12 +18934,13 @@ void SynthEditor::addTranceGateEditor(const String& prefix, const String& sectio
   };
   keyboard->announce = [](const String& message) { postLfoAnnouncement(message); };
   keyboard->setExplicitFocusOrder(focusOrder++);
-  keyboard->setBounds(x, y, width, 82);
+  watchShape(*keyboard);
+  keyboard->setBounds(x, y, width, atlas::ui::kShapeEditorHeight);
   parent.addAndMakeVisible(keyboard);
   if (auto* group = dynamic_cast<AccessibleSectionHeader*>(&parent)) group->addAccessibleChild(keyboard);
   row_focus_order_.push_back(keyboard);
   section_headers_.push_back(std::move(editor));
-  y += 90;
+  y += atlas::ui::kShapeEditorHeight + 8;
 }
 
 void SynthEditor::setAutomationProxyCallbacks(AccessibleParameterRow& row) {
@@ -20555,12 +20761,11 @@ void SynthEditor::addFilterTableControlsGroup(const String& filter_prefix, Compo
     button_ptr->setWantsKeyboardFocus(true);
     button_ptr->onClick = std::move(action);
     button_ptr->setExplicitFocusOrder(focus_order++);
-    button_ptr->setBounds(10, group_y, control_width, 38);
+    button_ptr->setBounds(row_flow_.nextButton(*group_ptr, 10, group_y, control_width));
     group_ptr->addAndMakeVisible(button_ptr);
     group_ptr->addAccessibleChild(button_ptr);
     row_focus_order_.push_back(button_ptr);
     section_headers_.push_back(std::move(button));
-    group_y += 44;
     return button_ptr;
   };
 
@@ -20716,12 +20921,11 @@ void SynthEditor::addWavetableControlsGroup(int oscillator, Component& parent, i
     button_ptr->setWantsKeyboardFocus(true);
     button_ptr->onClick = std::move(action);
     button_ptr->setExplicitFocusOrder(focus_order++);
-    button_ptr->setBounds(10, group_y, control_width, 38);
+    button_ptr->setBounds(row_flow_.nextButton(*controls_group_ptr, 10, group_y, control_width));
     controls_group_ptr->addAndMakeVisible(button_ptr);
     controls_group_ptr->addAccessibleChild(button_ptr);
     row_focus_order_.push_back(button_ptr);
     section_headers_.push_back(std::move(button));
-    group_y += 44;
   };
 
   add_button("Load wavetable", "Load a wavetable into " + section_name, [this, oscillator] {
@@ -20791,9 +20995,9 @@ int SynthEditor::addAccessibleWavetableEditorControls(int oscillator, Component&
   int control_y = editor_group_ptr->headerHeight() + 8;
   int control_width = jmax(200, editor_outer_width - 20);
 
-  auto attach = [&](auto control, int height, int gap, bool focusable) {
+  auto adopt = [&](auto control, Rectangle<int> bounds, bool focusable) {
     auto* control_ptr = control.get();
-    control_ptr->setBounds(control_x, control_y, control_width, height);
+    control_ptr->setBounds(bounds);
     controls_parent->addAndMakeVisible(control_ptr);
     if (accessible_controls_parent != nullptr)
       accessible_controls_parent->addAccessibleChild(control_ptr);
@@ -20803,8 +21007,17 @@ int SynthEditor::addAccessibleWavetableEditorControls(int oscillator, Component&
       row_focus_order_.push_back(control_ptr);
     }
     section_headers_.push_back(std::move(control));
-    control_y += height + gap;
     return control_ptr;
+  };
+  // On a line of its own.
+  auto attach = [&](auto control, int height, int gap, bool focusable) {
+    const Rectangle<int> bounds(control_x, control_y, control_width, height);
+    control_y += height + gap;
+    return adopt(std::move(control), bounds, focusable);
+  };
+  // A menu or slider in the next cell, under its name.
+  auto attachNamed = [&](auto control, const String& name) {
+    return adopt(std::move(control), nextNamedCell(*controls_parent, name, control_x, control_y, control_width), true);
   };
 
   auto addCombo = [&](const String& title, const String& description, const StringArray& choices,
@@ -20818,7 +21031,7 @@ int SynthEditor::addAccessibleWavetableEditorControls(int oscillator, Component&
     for (int i = 0; i < choices.size(); ++i)
       combo_ptr->addItem(choices[i], i + 1);
     combo_ptr->setSelectedId(jlimit(1, jmax(1, choices.size()), selected_id), dontSendNotification);
-    return attach(std::move(combo), 38, 6, true);
+    return attachNamed(std::move(combo), title);
   };
 
   auto addSlider = [&](const String& title, const String& description, double minimum, double maximum,
@@ -20846,7 +21059,8 @@ int SynthEditor::addAccessibleWavetableEditorControls(int oscillator, Component&
                              safe_slider->setValue(safe_slider->getValueFromText(text), sendNotificationSync);
                            });
     };
-    return attach(std::move(slider), 42, 6, true);
+    slider_ptr->setTextBoxStyle(Slider::TextBoxRight, false, 96, 26);
+    return attachNamed(std::move(slider), title);
   };
 
   auto addButton = [&](const String& title, const String& description, std::function<void()> action) {
@@ -20857,7 +21071,10 @@ int SynthEditor::addAccessibleWavetableEditorControls(int oscillator, Component&
     button_ptr->setDescription(description);
     button_ptr->setHelpText("Press Enter to " + description.toLowerCase());
     button_ptr->onClick = std::move(action);
-    return attach(std::move(button), 38, 6, true);
+    return adopt(std::move(button),
+                 row_flow_.nextBesideRows(*controls_parent, control_x, control_y, control_width,
+                                          atlas::ui::kRowHeight),
+                 true);
   };
 
   auto addText = [&](const String& title, const String& text) {
@@ -21129,7 +21346,12 @@ int SynthEditor::addAccessibleWavetableEditorControls(int oscillator, Component&
       return handleWavetableShortcut(oscillator, key, target);
     };
     keyboard_ptr->getStatusText = [this, oscillator] { return wavetableKeyboardStatusText(oscillator); };
-    attach(std::move(keyboard), 62, 6, true);
+    keyboard_ptr->paintShape = [this, oscillator](Graphics& g, Rectangle<float> area) {
+      paintWavetableFrame(g, area, oscillator);
+    };
+    keyboard_ptr->shapeStamp = [this, oscillator] { return wavetableFrameStamp(oscillator); };
+    watchShape(*keyboard_ptr);
+    attach(std::move(keyboard), atlas::ui::kShapeEditorHeight, 6, true);
 
     auto* scope = addCombo("Edit scope", "Choose whether waveform and harmonic edits affect the selected frame or all frames",
                            { "Current frame", "All frames" }, 1);
@@ -22659,12 +22881,11 @@ void SynthEditor::addSampleControlsGroup(int sample_target, Component& parent, i
     button_ptr->setWantsKeyboardFocus(true);
     button_ptr->setExplicitFocusOrder(focus_order++);
     button_ptr->onClick = std::move(action);
-    button_ptr->setBounds(10, group_y, jmax(200, width - 20), 38);
+    button_ptr->setBounds(row_flow_.nextButton(*group_ptr, 10, group_y, jmax(200, width - 20)));
     group_ptr->addAndMakeVisible(button_ptr);
     group_ptr->addAccessibleChild(button_ptr);
     row_focus_order_.push_back(button_ptr);
     section_headers_.push_back(std::move(button));
-    group_y += 44;
   };
   add_button("Load sample", "Load an audio sample for " + section_name,
              [this, sample_target] { chooseSampleFile(sample_target); });
@@ -22892,16 +23113,19 @@ void SynthEditor::addMultiSampleControlsGroup(int oscillator, Component& parent,
   section_headers_.push_back(std::move(group));
 
   int group_y = group_ptr->headerHeight() + 8;
-  auto place = [&](std::unique_ptr<Component> component, int height) {
+  // In the next cell: a button, or a menu or slider under its `name`.
+  auto place = [&](std::unique_ptr<Component> component, const String& name = {}) {
     auto* pointer = component.get();
     pointer->setWantsKeyboardFocus(true);
     pointer->setExplicitFocusOrder(focus_order++);
-    pointer->setBounds(10, group_y, jmax(200, width - 20), height);
+    const int inner_width = jmax(200, width - 20);
+    pointer->setBounds(name.isEmpty()
+                           ? row_flow_.nextBesideRows(*group_ptr, 10, group_y, inner_width, atlas::ui::kRowHeight)
+                           : nextNamedCell(*group_ptr, name, 10, group_y, inner_width));
     group_ptr->addAndMakeVisible(pointer);
     group_ptr->addAccessibleChild(pointer);
     row_focus_order_.push_back(pointer);
     section_headers_.push_back(std::move(component));
-    group_y += height + 6;
     return pointer;
   };
   auto add_button = [&](const String& title, const String& description, std::function<void()> action) {
@@ -22910,7 +23134,7 @@ void SynthEditor::addMultiSampleControlsGroup(int oscillator, Component& parent,
     button->setDescription(description);
     button->setHelpText("Press Enter to " + description.toLowerCase());
     button->onClick = std::move(action);
-    return static_cast<OffscreenTextButton*>(place(std::move(button), 38));
+    return static_cast<OffscreenTextButton*>(place(std::move(button)));
   };
 
   add_button("Load instrument", "Choose an SFZ, DecentSampler or SF2 file for " + section_name,
@@ -22982,7 +23206,8 @@ void SynthEditor::addMultiSampleControlsGroup(int oscillator, Component& parent,
       postPluginAnnouncement("Instrument preset " + instrumentPresetLabel((*presets)[static_cast<size_t>(item)]),
                              AccessibilityHandler::AnnouncementPriority::high);
     };
-    place(std::move(combo), 38);
+    const String preset_menu_name = combo_ptr->getTitle();
+    place(std::move(combo), preset_menu_name);
     add_button("Previous preset", "Play the previous preset of the SoundFont in " + section_name,
                [this, oscillator] { stepInstrumentPreset(oscillator, -1); });
     add_button("Next preset", "Play the next preset of the SoundFont in " + section_name,
@@ -23177,7 +23402,7 @@ namespace {
 }
 
 void SynthEditor::addInstrumentControlRows(int oscillator, const vital::multisample::LoadResult& result,
-                                           const std::function<Component*(std::unique_ptr<Component>, int)>& place,
+                                           const std::function<Component*(std::unique_ptr<Component>, const String&)>& place,
                                            const String& section_name) {
   auto* manager = synth_.getMultiSampleManager();
   if (manager == nullptr || result.instrument == nullptr)
@@ -23241,7 +23466,8 @@ void SynthEditor::addInstrumentControlRows(int oscillator, const vital::multisam
                                  handler->notifyAccessibilityEvent(AccessibilityEvent::valueChanged);
                              });
       };
-      place(std::move(slider), 42);
+      slider_ptr->setTextBoxStyle(Slider::TextBoxRight, false, 96, 26);
+      place(std::move(slider), title);
       continue;
     }
 
@@ -23269,7 +23495,7 @@ void SynthEditor::addInstrumentControlRows(int oscillator, const vital::multisam
     combo_ptr->onDefaultCommand = [combo_ptr, default_id] {
       combo_ptr->setSelectedId(default_id, sendNotificationSync);
     };
-    place(std::move(combo), 38);
+    place(std::move(combo), title);
   }
 }
 
@@ -24136,12 +24362,11 @@ AccessibleSectionHeader* SynthEditor::addButtonGroup(const String& title, const 
       if (action)
         action(*button_ptr);
     };
-    button_ptr->setBounds(10, group_y, jmax(200, width - 20), 38);
+    button_ptr->setBounds(row_flow_.nextButton(*group_ptr, 10, group_y, jmax(200, width - 20)));
     group_ptr->addAndMakeVisible(button_ptr);
     group_ptr->addAccessibleChild(button_ptr);
     row_focus_order_.push_back(button_ptr);
     section_headers_.push_back(std::move(button));
-    group_y += 44;
   }
   group_ptr->setBounds(x, y, width, group_y + 2);
   y += group_y + 10;
@@ -24969,6 +25194,7 @@ void SynthEditor::timerCallback() {
   finishCommunityPreviewIfEnded();
   if (cpu_meter_ != nullptr && cpu_meter_->isShowing())
     cpu_meter_->refresh();
+  refreshShapesInView();
   synth_.dispatchPendingGuiUpdates(*this);
   updateToolbarUndoButtons(false);
   // Slot rows depend on these choices (Dimension Expander mode, Resonator model).

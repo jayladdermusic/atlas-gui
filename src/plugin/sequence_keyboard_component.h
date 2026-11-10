@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "JuceHeader.h"
-#include "editor_look_and_feel.h"
+#include "editor_drawings.h"
 
-class LfoMsegKeyboardComponent : public Component {
+class LfoMsegKeyboardComponent : public atlas::ui::ShapeView {
   public:
     std::function<bool(const KeyPress&)> onKeyPressed;
     std::function<String()> getStatusText;
@@ -16,8 +16,10 @@ class LfoMsegKeyboardComponent : public Component {
     }
 
     bool keyPressed(const KeyPress& key) override {
-      if (onKeyPressed)
-        return onKeyPressed(key);
+      if (onKeyPressed && onKeyPressed(key)) {
+        repaint();
+        return true;
+      }
       return Component::keyPressed(key);
     }
 
@@ -25,7 +27,8 @@ class LfoMsegKeyboardComponent : public Component {
     void focusLost(FocusChangeType) override { repaint(); }
 
     void paint(Graphics& g) override {
-      atlas::ui::drawKeyboardEditorBox(g, *this, getStatusText ? getStatusText() : String("LFO keyboard editor"));
+      atlas::ui::drawKeyboardEditorBox(g, *this, getStatusText ? getStatusText() : String("LFO keyboard editor"),
+                                       paintShape);
     }
 
     std::unique_ptr<AccessibilityHandler> createAccessibilityHandler() override {

@@ -54,15 +54,6 @@ inline void drawBar(Graphics& g, Rectangle<float> bar, float proportion, Colour 
   g.fillRoundedRectangle(bar.withWidth(bar.getWidth() * jlimit(0.0f, 1.0f, proportion)), radius);
 }
 
-// The box of a keyboard editor (LFO, Trance gate, wavetable, remap), which
-// shows the line a screen reader reads for it.
-inline void drawKeyboardEditorBox(Graphics& g, const Component& editor, const String& status) {
-  drawField(g, editor.getLocalBounds().toFloat().reduced(1.0f), colours::window, editor.hasKeyboardFocus(false), 6.0f);
-  g.setColour(colours::text);
-  g.setFont(FontOptions(15.0f));
-  g.drawText(status, editor.getLocalBounds().reduced(12), Justification::centredLeft, true);
-}
-
 class EditorLookAndFeel : public LookAndFeel_V4 {
   public:
     // On a toggle whose row already shows its name: the switch is followed by
