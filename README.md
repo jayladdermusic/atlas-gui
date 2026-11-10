@@ -1,4 +1,6 @@
-# Atlas
+# Atlas GUI
+
+This is an experimental fork of [Atlas](https://github.com/BlindProducers/atlas). It reworks how the editor looks and is laid out, so that it makes more sense to sighted users. Keyboard and screen reader behaviour stays as it is in Atlas.
 
 Atlas is an open-source, fully accessible AU/VST3 synthesizer for macOS and Windows. Built on the foundation of Matt Tytel's [Vital](https://github.com/mtytel/vital), Atlas preserves the original sound engine while significantly expanding it with more oscillator engines, filter types, effects, modular routing, and modulation sources.
 
