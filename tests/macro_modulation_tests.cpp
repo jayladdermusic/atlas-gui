@@ -949,22 +949,65 @@ int main(int argc, char** argv) {
   if (argc > 1 && String(argv[1]) == "--credential-store")
     return runCredentialStoreTests();
   // Not a test: saves a picture of the editor, to look at it without a host.
-  // --editor-snapshot <file.png> [settings | id of a parameter to scroll to and focus]
+  // --editor-snapshot <file.png> [target] [name=value ...]
+  // The target is "settings" for the Settings window, or the id of a parameter
+  // or the title of a control to scroll to and focus. Each name=value sets a
+  // parameter before the editor opens (fx_slot_1_type=3 puts a Delay in the
+  // chain). connect=lfo_1:osc_1_level adds a modulation route, width= and
+  // height= size the window, and press=<title> presses a button once it is open.
   if (argc > 2 && String(argv[1]) == "--editor-snapshot") {
     SynthPlugin synth;
+    int width = 0, height = 0;
+    StringArray presses;
+    for (int i = 4; i < argc; ++i) {
+      const String name = String(argv[i]).upToFirstOccurrenceOf("=", false, false);
+      const String setting = String(argv[i]).fromFirstOccurrenceOf("=", false, false);
+      if (name == "connect")
+        synth.connectModulation(setting.upToFirstOccurrenceOf(":", false, false).toStdString(),
+                                setting.fromFirstOccurrenceOf(":", false, false).toStdString());
+      else if (name == "width")
+        width = setting.getIntValue();
+      else if (name == "height")
+        height = setting.getIntValue();
+      else if (name == "press")
+        presses.add(setting);
+      else
+        synth.parameterChanged(name.toStdString(), setting.getFloatValue());
+    }
     SynthEditor editor(synth);
+    if (width > 0 || height > 0)
+      editor.setSize(width > 0 ? width : editor.getWidth(), height > 0 ? height : editor.getHeight());
     editor.updateFullGui();
     editor.addToDesktop(0);
     editor.setVisible(true);
     editor.toFront(true);
     pumpEditorEvents();
+
+    std::function<Component*(Component&, const String&)> titled = [&](Component& parent, const String& title) {
+      for (auto* child : parent.getChildren()) {
+        if (child->getTitle() == title)
+          return child;
+        if (auto* found = titled(*child, title))
+          return found;
+      }
+      return static_cast<Component*>(nullptr);
+    };
+    for (const auto& title : presses) {
+      if (auto* button = dynamic_cast<Button*>(titled(editor, title)))
+        button->triggerClick();
+      pumpEditorEvents();
+    }
+
     Component* shown = &editor;
     if (argc > 3 && String(argv[3]) == "settings") {
       shown = editor.showSettingsForTesting();
       pumpEditorEvents();
     }
     else if (argc > 3) {
-      if (auto* control = editor.controlForParameter(argv[3])) {
+      auto* control = editor.controlForParameter(argv[3]);
+      if (control == nullptr)
+        control = titled(editor, argv[3]);
+      if (control != nullptr) {
         editor.ensureComponentVisible(control);
         control->grabKeyboardFocus();
         pumpEditorEvents();
