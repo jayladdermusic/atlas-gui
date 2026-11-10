@@ -948,6 +948,36 @@ int main(int argc, char** argv) {
   atlas::community::setCredentialStoreForTesting(std::make_shared<atlas::credentials::MemoryStore>());
   if (argc > 1 && String(argv[1]) == "--credential-store")
     return runCredentialStoreTests();
+  // Not a test: saves a picture of the editor, to look at it without a host.
+  // --editor-snapshot <file.png> [settings | id of a parameter to scroll to and focus]
+  if (argc > 2 && String(argv[1]) == "--editor-snapshot") {
+    SynthPlugin synth;
+    SynthEditor editor(synth);
+    editor.updateFullGui();
+    editor.addToDesktop(0);
+    editor.setVisible(true);
+    editor.toFront(true);
+    pumpEditorEvents();
+    Component* shown = &editor;
+    if (argc > 3 && String(argv[3]) == "settings") {
+      shown = editor.showSettingsForTesting();
+      pumpEditorEvents();
+    }
+    else if (argc > 3) {
+      if (auto* control = editor.controlForParameter(argv[3])) {
+        editor.ensureComponentVisible(control);
+        control->grabKeyboardFocus();
+        pumpEditorEvents();
+      }
+    }
+    if (shown == nullptr)
+      return 1;
+    const Image image = shown->createComponentSnapshot(shown->getLocalBounds(), true, 2.0f);
+    const File file = File::getCurrentWorkingDirectory().getChildFile(argv[2]);
+    file.deleteFile();
+    FileOutputStream stream(file);
+    return stream.openedOk() && PNGImageFormat().writeImageToStream(image, stream) ? 0 : 1;
+  }
   if (argc > 1 && String(argv[1]) == "--editor-rebuild-focus") {
     testEditorRebuildFocus();
     testEffectRemovalFocus();
