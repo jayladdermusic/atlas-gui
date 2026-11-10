@@ -158,8 +158,20 @@ class PresetTableListBox : public SelectionKeyList<TableListBox> {
 
     void focusGained(FocusChangeType cause) override {
       SelectionKeyList::focusGained(cause);
+      repaint();
       if (onFocusGained)
         onFocusGained();
+    }
+
+    void focusLost(FocusChangeType cause) override {
+      SelectionKeyList::focusLost(cause);
+      repaint();
+    }
+
+    void paintOverChildren(Graphics& g) override {
+      SelectionKeyList::paintOverChildren(g);
+      if (hasKeyboardFocus(false))
+        atlas::ui::drawFocusRing(g, getLocalBounds().toFloat(), 2.0f);
     }
 
     bool keyPressed(const KeyPress& key) override {
@@ -269,13 +281,12 @@ class ModulationRemapKeyboardComponent : public Component {
       return Component::keyPressed(key);
     }
 
+    void focusGained(FocusChangeType) override { repaint(); }
+    void focusLost(FocusChangeType) override { repaint(); }
+
     void paint(Graphics& g) override {
-      g.fillAll(Colour(0xff20242b));
-      g.setColour(Colour(0xffd9dee2));
-      g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(1.0f), 6.0f, 1.0f);
-      g.setColour(Colours::white);
-      g.drawText(getStatusText ? getStatusText() : String("Modulation remap keyboard editor"),
-                 getLocalBounds().reduced(12), Justification::centredLeft, true);
+      atlas::ui::drawKeyboardEditorBox(g, *this,
+                                       getStatusText ? getStatusText() : String("Modulation remap keyboard editor"));
     }
 
     std::unique_ptr<AccessibilityHandler> createAccessibilityHandler() override {
@@ -318,13 +329,11 @@ class WavetableKeyboardComponent : public Component {
       return Component::keyPressed(key);
     }
 
+    void focusGained(FocusChangeType) override { repaint(); }
+    void focusLost(FocusChangeType) override { repaint(); }
+
     void paint(Graphics& g) override {
-      g.fillAll(Colour(0xff20242b));
-      g.setColour(Colour(0xffd9dee2));
-      g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(1.0f), 6.0f, 1.0f);
-      g.setColour(Colours::white);
-      g.drawText(getStatusText ? getStatusText() : String("Wavetable keyboard editor"),
-                 getLocalBounds().reduced(12), Justification::centredLeft, true);
+      atlas::ui::drawKeyboardEditorBox(g, *this, getStatusText ? getStatusText() : String("Wavetable keyboard editor"));
     }
 
     std::unique_ptr<AccessibilityHandler> createAccessibilityHandler() override {
@@ -505,6 +514,9 @@ class SynthEditor : public AudioProcessorEditor, public SynthGuiInterface,
       std::pair<float, float> point;
       float power = 0.0f;
     };
+
+    // Before every control, so each is built with it and it outlives them all.
+    atlas::ui::SharedLookAndFeel look_and_feel_;
 
     void timerCallback() override;
     // Choice values that decide which rows an effect slot shows.

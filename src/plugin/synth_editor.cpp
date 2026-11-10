@@ -5888,7 +5888,7 @@ namespace {
     const String spoken_text = text.isEmpty() ? String("None") : text;
     label->setTitle(includeColumnName ? columnName + ": " + spoken_text : spoken_text);
     label->setDescription(label->getTitle());
-    label->setColour(Label::textColourId, Colours::white);
+    label->setColour(Label::textColourId, atlas::ui::colours::text);
     label->setJustificationType(centred ? Justification::centred : Justification::centredLeft);
     label->onContextMenu = std::move(contextMenu);
     label->setInterceptsMouseClicks(false, false);
@@ -5907,11 +5907,11 @@ class PresetResultsTableModel final : public TableListBoxModel {
     int getNumRows() override { return editor_.filtered_presets_.size(); }
 
     void paintRowBackground(Graphics& g, int, int, int, bool selected) override {
-      g.fillAll(selected ? Colour(0xff315a7d) : Colour(0xff20242b));
+      g.fillAll(selected ? atlas::ui::colours::selection : atlas::ui::colours::window);
     }
 
     void paintCell(Graphics& g, int row, int column, int width, int height, bool) override {
-      g.setColour(Colours::white);
+      g.setColour(atlas::ui::colours::text);
       g.drawText(editor_.presetTableCellText(row, column), 7, 0, width - 14, height,
                  column == kPresetFavoriteColumn ? Justification::centred : Justification::centredLeft, true);
     }
@@ -5975,11 +5975,11 @@ class PresetFacetTableModel final : public TableListBoxModel {
     int getNumRows() override { return editor_.presetFacetRowCount(kind_); }
 
     void paintRowBackground(Graphics& g, int, int, int, bool selected) override {
-      g.fillAll(selected ? Colour(0xff315a7d) : Colour(0xff20242b));
+      g.fillAll(selected ? atlas::ui::colours::selection : atlas::ui::colours::window);
     }
 
     void paintCell(Graphics& g, int row, int, int width, int height, bool) override {
-      g.setColour(Colours::white);
+      g.setColour(atlas::ui::colours::text);
       g.drawText(editor_.presetFacetCellText(kind_, row), 7, 0, width - 14, height,
                  Justification::centredLeft, true);
     }
@@ -6040,16 +6040,20 @@ class CpuUsageMeter final : public Component {
       }
     }
 
+    void focusGained(FocusChangeType) override { repaint(); }
+    void focusLost(FocusChangeType) override { repaint(); }
+
     void paint(Graphics& g) override {
+      using namespace atlas::ui;
+      if (hasKeyboardFocus(false))
+        drawFocusRing(g, getLocalBounds().toFloat().reduced(2.0f, 4.0f));
       auto bounds = getLocalBounds().reduced(8, 10);
-      g.setColour(Colours::white);
+      g.setColour(colours::text);
       g.drawText("CPU Usage", bounds.removeFromLeft(jmin(260, bounds.getWidth() / 2)), Justification::centredLeft);
       g.drawText(String(displayed_percentage_, 1) + "%", bounds.removeFromRight(150), Justification::centredRight);
-      const auto bar = bounds.reduced(8, 5).toFloat();
-      g.setColour(Colour(0xff303840));
-      g.fillRoundedRectangle(bar, 3.0f);
-      g.setColour(displayed_percentage_ >= 90.0 ? Colour(0xffe4a05e) : Colour(0xff69b5cf));
-      g.fillRoundedRectangle(bar.withWidth(bar.getWidth() * static_cast<float>(displayed_percentage_ / 100.0)), 3.0f);
+      const auto bar = bounds.reduced(8, 0).toFloat();
+      drawBar(g, bar.withSizeKeepingCentre(bar.getWidth(), 6.0f), static_cast<float>(displayed_percentage_ / 100.0),
+              displayed_percentage_ >= 90.0 ? colours::warning : colours::accent);
     }
 
     std::unique_ptr<AccessibilityHandler> createAccessibilityHandler() override {
@@ -6141,19 +6145,15 @@ class TransferProgressBar : public Component {
     void focusLost(FocusChangeType) override { repaint(); }
 
     void paint(Graphics& g) override {
+      using namespace atlas::ui;
       auto bounds = getLocalBounds();
-      if (hasKeyboardFocus(false)) {
-        g.setColour(Colours::white);
-        g.drawRoundedRectangle(bounds.toFloat().reduced(1.0f), 4.0f, 1.0f);
-      }
-      g.setColour(Colours::white);
+      if (hasKeyboardFocus(false))
+        drawFocusRing(g, bounds.toFloat());
+      g.setColour(colours::text);
       g.drawText(percent_ < 0 ? String("Preparing") : String(percent_) + "%", bounds.removeFromRight(90).reduced(6, 0),
                  Justification::centredRight);
-      const auto bar = bounds.reduced(8, 10).toFloat();
-      g.setColour(Colour(0xff303840));
-      g.fillRoundedRectangle(bar, 3.0f);
-      g.setColour(Colour(0xff69b5cf));
-      g.fillRoundedRectangle(bar.withWidth(bar.getWidth() * static_cast<float>(jmax(0, percent_)) / 100.0f), 3.0f);
+      const auto bar = bounds.reduced(8, 0).toFloat();
+      drawBar(g, bar.withSizeKeepingCentre(bar.getWidth(), 6.0f), static_cast<float>(jmax(0, percent_)) / 100.0f);
     }
 
     std::unique_ptr<AccessibilityHandler> createAccessibilityHandler() override {
@@ -6254,7 +6254,7 @@ class AccessibleParameterRow : public Component {
       built_description_ = parameter_description;
       label_.setText(accessible_name, dontSendNotification);
       label_.setTitle(accessible_name + " label");
-      label_.setColour(Label::textColourId, Colours::white);
+      label_.setColour(Label::textColourId, atlas::ui::colours::text);
       addAndMakeVisible(label_);
 
       if (use_combo_control_) {
@@ -6289,6 +6289,8 @@ class AccessibleParameterRow : public Component {
       }
       else if (use_toggle_control_) {
         toggle_.setButtonText(accessible_name);
+        // The row's label already shows the name.
+        toggle_.getProperties().set(atlas::ui::EditorLookAndFeel::kShowsStateOnly, true);
         toggle_.setTitle(accessible_name);
         toggle_.setDescription(parameter_description);
         toggle_.setTooltip(parameter_description);
@@ -6594,6 +6596,20 @@ class AccessibleParameterRow : public Component {
       else
         slider_.setBounds(bounds);
     }
+
+    // The row holding the focused control is marked, so the eye finds what
+    // the keyboard and the screen reader are on.
+    void paint(Graphics& g) override {
+      if (!hasKeyboardFocus(true))
+        return;
+      const auto bounds = getLocalBounds().toFloat().reduced(2.0f, 1.0f);
+      g.setColour(atlas::ui::colours::accent.withAlpha(0.12f));
+      g.fillRoundedRectangle(bounds, atlas::ui::kFieldRadius);
+      g.setColour(atlas::ui::colours::accent);
+      g.fillRoundedRectangle(bounds.withWidth(3.0f), 1.5f);
+    }
+
+    void focusOfChildComponentChanged(FocusChangeType) override { repaint(); }
 
   private:
     enum ContextMenuAction {
@@ -6918,15 +6934,32 @@ class AccessibleSectionHeader : public Component, public AccessibleContextMenuTa
       repaint();
     }
 
+    // A card: groups and the sections nested in them alternate two shades, so
+    // each level stands out from the one around it. The title takes the accent
+    // colour while the focus is inside, and a ring while it is on the heading.
     void paint(Graphics& g) override {
-      const auto bounds = getLocalBounds().toFloat().reduced(2.0f);
-      g.setColour(top_level_ ? Colour(0xff28313d) : Colour(0xff20262f));
-      g.fillRoundedRectangle(bounds, 5.0f);
-      g.setColour(Colours::white);
-      g.setFont(FontOptions(top_level_ ? 18.0f : 15.0f, top_level_ ? Font::bold : Font::plain));
-      g.drawText(title_, getLocalBounds().withHeight(headerHeight()).reduced(top_level_ ? 12 : 22, 0),
-                 Justification::centredLeft, true);
+      using namespace atlas::ui;
+      int depth = 0;
+      for (auto* parent = getParentComponent(); parent != nullptr; parent = parent->getParentComponent())
+        if (dynamic_cast<AccessibleSectionHeader*>(parent) != nullptr)
+          ++depth;
+      const auto card = getLocalBounds().toFloat().reduced(2.0f);
+      g.setColour(depth % 2 == 0 ? colours::group : colours::section);
+      g.fillRoundedRectangle(card, kCardRadius);
+      g.setColour(colours::outline);
+      g.drawRoundedRectangle(card.reduced(0.5f), kCardRadius, 1.0f);
+
+      const auto heading = getLocalBounds().withHeight(headerHeight());
+      g.setColour(hasKeyboardFocus(true) ? colours::accent : colours::text);
+      g.setFont(FontOptions(top_level_ ? 18.0f : 15.0f, Font::bold));
+      g.drawText(title_, heading.reduced(14, 0), Justification::centredLeft, true);
+      if (hasKeyboardFocus(false))
+        drawFocusRing(g, heading.toFloat().reduced(4.0f), kCardRadius - 2.0f);
     }
+
+    void focusGained(FocusChangeType) override { repaintHeading(); }
+    void focusLost(FocusChangeType) override { repaintHeading(); }
+    void focusOfChildComponentChanged(FocusChangeType) override { repaintHeading(); }
 
     bool keyPressed(const KeyPress& key) override {
       // Shift M opens the heading's menu before any other command claims the
@@ -7007,6 +7040,8 @@ class AccessibleSectionHeader : public Component, public AccessibleContextMenuTa
     bool isTopLevel() const { return top_level_; }
 
   private:
+    void repaintHeading() { repaint(0, 0, getWidth(), headerHeight()); }
+
     void configure(const String& title, int groupRank, bool topLevel, const String& sectionKey) {
       title_ = title;
       top_level_ = topLevel;
@@ -7076,7 +7111,7 @@ SynthEditor::SynthEditor(SynthPlugin& synth) :
   title_.setText("Atlas", dontSendNotification);
   title_.setFont(FontOptions(24.0f, Font::bold));
   title_.setTitle("Atlas");
-  title_.setColour(Label::textColourId, Colours::white);
+  title_.setColour(Label::textColourId, atlas::ui::colours::text);
   addAndMakeVisible(title_);
 
   // The Toolbar, the first group: Settings, Undo, Redo and Show preset browser.
@@ -7121,7 +7156,7 @@ SynthEditor::SynthEditor(SynthPlugin& synth) :
 
   preset_summary_.setTitle("Preset summary");
   preset_summary_.setDescription("Current preset and Atlas resources path");
-  preset_summary_.setColour(Label::textColourId, Colours::white);
+  preset_summary_.setColour(Label::textColourId, atlas::ui::colours::text);
   preset_summary_.setJustificationType(Justification::centredLeft);
   addChildComponent(preset_summary_);
 
@@ -7171,7 +7206,8 @@ SynthEditor::SynthEditor(SynthPlugin& synth) :
   preset_search_.setTitle("Preset search");
   preset_search_.setDescription("Filter presets by name, folder, author, category, or tags");
   preset_search_.setHelpText("Type text to narrow the preset list");
-  preset_search_.setTextToShowWhenEmpty("Search presets", Colours::grey);
+  preset_search_.setTextToShowWhenEmpty("Search presets", atlas::ui::colours::textDim);
+  preset_search_.setJustification(Justification::centredLeft);
   preset_search_.setWantsKeyboardFocus(true);
   preset_search_.setText(last_preset_search_, false);
   preset_search_.onTextChange = [this] {
@@ -7305,7 +7341,7 @@ SynthEditor::SynthEditor(SynthPlugin& synth) :
 
   preset_details_.setTitle("Selected preset details");
   preset_details_.setDescription("No preset selected");
-  preset_details_.setColour(Label::textColourId, Colours::white);
+  preset_details_.setColour(Label::textColourId, atlas::ui::colours::text);
   preset_details_.setFont(FontOptions(13.0f));
   preset_details_.setMinimumHorizontalScale(0.65f);
   preset_details_.setJustificationType(Justification::centredLeft);
@@ -7315,7 +7351,7 @@ SynthEditor::SynthEditor(SynthPlugin& synth) :
 
   save_patch_prompt_.setTitle("Save patch");
   save_patch_prompt_.setDescription("Save the current Atlas patch");
-  save_patch_prompt_.setColour(Label::textColourId, Colours::white);
+  save_patch_prompt_.setColour(Label::textColourId, atlas::ui::colours::text);
   save_patch_prompt_.setJustificationType(Justification::centredLeft);
   addChildComponent(save_patch_prompt_);
 
@@ -7323,7 +7359,8 @@ SynthEditor::SynthEditor(SynthPlugin& synth) :
     // No description: a screen reader would say the title twice.
     editor.setTitle(title);
     editor.setHelpText("Type " + title.toLowerCase() + ". Return saves the patch");
-    editor.setTextToShowWhenEmpty(empty_text, Colours::grey);
+    editor.setTextToShowWhenEmpty(empty_text, atlas::ui::colours::textDim);
+    editor.setJustification(Justification::centredLeft);
     editor.setSelectAllWhenFocused(true);
     editor.setWantsKeyboardFocus(true);
     // Return saves from any box, as the Save button does, and Escape closes
@@ -7384,7 +7421,7 @@ SynthEditor::SynthEditor(SynthPlugin& synth) :
   addChildComponent(save_patch_cancel_);
 
   // The Share form (showShareForm).
-  share_prompt_.setColour(Label::textColourId, Colours::white);
+  share_prompt_.setColour(Label::textColourId, atlas::ui::colours::text);
   share_prompt_.setJustificationType(Justification::centredLeft);
   addChildComponent(share_prompt_);
   auto configureShareEditor = [this](TextEditor& editor, const String& title, const String& help,
@@ -7392,7 +7429,8 @@ SynthEditor::SynthEditor(SynthPlugin& synth) :
     editor.setTitle(title);
     editor.setDescription(help);
     editor.setHelpText(help);
-    editor.setTextToShowWhenEmpty(empty_text, Colours::grey);
+    editor.setTextToShowWhenEmpty(empty_text, atlas::ui::colours::textDim);
+    editor.setJustification(Justification::centredLeft);
     editor.setSelectAllWhenFocused(true);
     editor.setWantsKeyboardFocus(true);
     // Return shares, Escape closes the form, as its buttons do.
@@ -7467,7 +7505,7 @@ SynthEditor::SynthEditor(SynthPlugin& synth) :
 
   routing_summary_.setTitle("Routing summary");
   routing_summary_.setDescription("Summary of oscillator, sample, filter, and effects routing");
-  routing_summary_.setColour(Label::textColourId, Colours::white);
+  routing_summary_.setColour(Label::textColourId, atlas::ui::colours::text);
   routing_summary_.setJustificationType(Justification::centredLeft);
   addChildComponent(routing_summary_);
 
@@ -7521,7 +7559,7 @@ SynthEditor::SynthEditor(SynthPlugin& synth) :
 
   modulation_amount_prompt_.setTitle("Initial modulation amount");
   modulation_amount_prompt_.setDescription("Type the maximum modulation amount from minus one to one");
-  modulation_amount_prompt_.setColour(Label::textColourId, Colours::white);
+  modulation_amount_prompt_.setColour(Label::textColourId, atlas::ui::colours::text);
   modulation_amount_prompt_.setJustificationType(Justification::centredLeft);
   addChildComponent(modulation_amount_prompt_);
 
@@ -7529,6 +7567,7 @@ SynthEditor::SynthEditor(SynthPlugin& synth) :
   modulation_amount_editor_.setDescription("Maximum modulation amount from minus one to one");
   modulation_amount_editor_.setHelpText("Type a value from minus one to one, then press Return or OK");
   modulation_amount_editor_.setWantsKeyboardFocus(true);
+  modulation_amount_editor_.setJustification(Justification::centredLeft);
   modulation_amount_editor_.onReturnKey = [this] { applyInlineTextPrompt(); };
   // The field keeps Escape to itself, so the editor's own Escape key never sees it.
   modulation_amount_editor_.onEscapeKey = [this] {
@@ -7655,7 +7694,7 @@ SynthEditor::~SynthEditor() {
 }
 
 void SynthEditor::paint(Graphics& graphics) {
-  graphics.fillAll(Colour(0xff17191d));
+  graphics.fillAll(atlas::ui::colours::window);
 }
 
 void SynthEditor::resized() {
@@ -9403,6 +9442,7 @@ DialogWindow* SynthEditor::launchDialogWindow(DialogWindow::LaunchOptions& optio
   std::shared_ptr<OpenOsWindow> window;
   if (kOsWindowsReturnFocus)
     window = openOsWindow(focusToReturnTo());
+  options.dialogBackgroundColour = atlas::ui::colours::window;
   auto* dialog = options.launchAsync();
   if (dialog == nullptr || window == nullptr)
     return dialog;
@@ -10254,7 +10294,7 @@ void SynthEditor::showAllSections(bool announce) {
         summary_ptr->setDescription("Current order of the effects chain");
         summary_ptr->getProperties().set("SectionName", section_name);
         summary_ptr->getProperties().set("EffectChainSummary", true);
-        summary_ptr->setColour(Label::textColourId, Colours::white);
+        summary_ptr->setColour(Label::textColourId, atlas::ui::colours::text);
         summary_ptr->setJustificationType(Justification::centredLeft);
         summary_ptr->setBounds(flatten_section ? 16 : 10, section_y,
                                jmax(620, width - (flatten_section ? 32 : 34)), 54);
@@ -10346,9 +10386,12 @@ namespace {
       static constexpr int kHeadingHeight = 28;
 
       void paint(Graphics& g) override {
-        g.setColour(Colour(0xff2a2f37));
-        g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), 5.0f, 1.0f);
-        g.setColour(Colours::white);
+        const auto card = getLocalBounds().toFloat();
+        g.setColour(atlas::ui::colours::group);
+        g.fillRoundedRectangle(card, atlas::ui::kCardRadius);
+        g.setColour(atlas::ui::colours::outline);
+        g.drawRoundedRectangle(card.reduced(0.5f), atlas::ui::kCardRadius, 1.0f);
+        g.setColour(atlas::ui::colours::text);
         g.setFont(FontOptions(15.0f, Font::bold));
         g.drawText(getTitle(), 10, 4, getWidth() - 20, kHeadingHeight - 4, Justification::centredLeft, true);
       }
@@ -10389,7 +10432,7 @@ namespace {
   class SettingsText : public Label {
     public:
       SettingsText() {
-        setColour(Label::textColourId, Colours::white);
+        setColour(Label::textColourId, atlas::ui::colours::text);
         setWantsKeyboardFocus(true);
       }
 
@@ -10594,7 +10637,8 @@ class AtlasSettingsContent : public Component, private FocusChangeListener {
       token_.setTitle("API token");
       token_.setDescription("From the API tokens page of your account on " + host + ". It starts with bpa_");
       token_.setHelpText(token_.getDescription());
-      token_.setTextToShowWhenEmpty("API token", Colours::grey);
+      token_.setTextToShowWhenEmpty("API token", atlas::ui::colours::textDim);
+      token_.setJustification(Justification::centredLeft);
       token_.setPasswordCharacter(static_cast<juce_wchar>(0x2022));
       token_.setSelectAllWhenFocused(true);
       token_.setWantsKeyboardFocus(true);
@@ -11124,7 +11168,8 @@ class CommunityLoginContent : public Component {
       token_.setDescription("Your personal API token from the API tokens page of your account on " + host +
                             ". It starts with bpa_");
       token_.setHelpText(token_.getDescription());
-      token_.setTextToShowWhenEmpty("API token", Colours::grey);
+      token_.setTextToShowWhenEmpty("API token", atlas::ui::colours::textDim);
+      token_.setJustification(Justification::centredLeft);
       // A password box: what is typed is drawn as dots and screen readers are
       // told it is protected, so the token is never shown or read out.
       token_.setPasswordCharacter(static_cast<juce_wchar>(0x2022));
@@ -20820,7 +20865,7 @@ int SynthEditor::addAccessibleWavetableEditorControls(int oscillator, Component&
     label->setTitle(title);
     label->setDescription(text);
     label->setText(text, dontSendNotification);
-    label->setColour(Label::textColourId, Colours::white);
+    label->setColour(Label::textColourId, atlas::ui::colours::text);
     return attach(std::move(label), 38, 6, false);
   };
 
@@ -22981,7 +23026,8 @@ void SynthEditor::addSpeechControlsGroup(int oscillator, Component& parent, int&
   editor_ptr->setDescription(speechStatusDescription(oscillator));
   editor_ptr->setHelpText("Type the words, then press Enter. Each note sings the next syllable, and the notes of a "
                           "chord sing one syllable together. Escape restores the words.");
-  editor_ptr->setTextToShowWhenEmpty("Type the words to sing", Colours::grey);
+  editor_ptr->setTextToShowWhenEmpty("Type the words to sing", atlas::ui::colours::textDim);
+  editor_ptr->setJustification(Justification::centredLeft);
   editor_ptr->setMultiLine(false);
   editor_ptr->setReturnKeyStartsNewLine(false);
   editor_ptr->setInputRestrictions(vital::speech::Manager::kMaxTextLength);

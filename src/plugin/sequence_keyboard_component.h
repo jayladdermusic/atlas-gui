@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "JuceHeader.h"
+#include "editor_look_and_feel.h"
 
 class LfoMsegKeyboardComponent : public Component {
   public:
@@ -20,13 +21,11 @@ class LfoMsegKeyboardComponent : public Component {
       return Component::keyPressed(key);
     }
 
+    void focusGained(FocusChangeType) override { repaint(); }
+    void focusLost(FocusChangeType) override { repaint(); }
+
     void paint(Graphics& g) override {
-      g.fillAll(Colour(0xff20242b));
-      g.setColour(Colour(0xffd9dee2));
-      g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(1.0f), 6.0f, 1.0f);
-      g.setColour(Colours::white);
-      g.drawText(getStatusText ? getStatusText() : String("LFO keyboard editor"),
-                 getLocalBounds().reduced(12), Justification::centredLeft, true);
+      atlas::ui::drawKeyboardEditorBox(g, *this, getStatusText ? getStatusText() : String("LFO keyboard editor"));
     }
 
     std::unique_ptr<AccessibilityHandler> createAccessibilityHandler() override {
